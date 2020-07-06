@@ -213,14 +213,16 @@ func (c *Cors) Handler(h fasthttp.RequestHandler) fasthttp.RequestHandler {
 			// headers (see #1)
 			if c.optionPassthrough {
 				h(ctx)
-			} else {
-				ctx.SetStatusCode(http.StatusNoContent)
+				return
 			}
-		} else {
-			c.logf("Handler: Actual request")
-			c.handleActualRequest(ctx)
-			h(ctx)
+
+			ctx.SetStatusCode(http.StatusNoContent)
+			return
 		}
+
+		c.logf("Handler: Actual request")
+		c.handleActualRequest(ctx)
+		h(ctx)
 	}
 }
 
