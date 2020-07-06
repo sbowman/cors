@@ -1,18 +1,20 @@
 package cors
 
-import "strings"
+import (
+	"bytes"
+)
 
 const toLower = 'a' - 'A'
 
 type converter func(string) string
 
 type wildcard struct {
-	prefix string
-	suffix string
+	prefix []byte
+	suffix []byte
 }
 
-func (w wildcard) match(s string) bool {
-	return len(s) >= len(w.prefix)+len(w.suffix) && strings.HasPrefix(s, w.prefix) && strings.HasSuffix(s, w.suffix)
+func (w wildcard) match(s []byte) bool {
+	return len(s) >= len(w.prefix)+len(w.suffix) && bytes.HasPrefix(s, w.prefix) && bytes.HasSuffix(s, w.suffix)
 }
 
 // convert converts a list of string using the passed converter function
@@ -25,7 +27,7 @@ func convert(s []string, c converter) []string {
 }
 
 // parseHeaderList tokenize + normalize a string containing a list of headers
-func parseHeaderList(headerList string) []string {
+func parseHeaderList(headerList []byte) []string {
 	l := len(headerList)
 	h := make([]byte, 0, l)
 	upper := true

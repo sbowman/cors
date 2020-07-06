@@ -6,11 +6,13 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/valyala/fasthttp"
 )
 
-var testHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("bar"))
-})
+var testHandler = func(ctx *fasthttp.RequestCtx) {
+	ctx.Write([]byte("bar"))
+}
 
 var allHeaders = []string{
 	"Vary",
@@ -22,14 +24,26 @@ var allHeaders = []string{
 	"Access-Control-Expose-Headers",
 }
 
-func assertHeaders(t *testing.T, resHeaders http.Header, expHeaders map[string]string) {
+func assertHeaders(t *testing.T, ctx *fasthttp.RequestCtx, expHeaders map[string]string) {
 	for _, name := range allHeaders {
-		got := strings.Join(resHeaders[name], ", ")
+		got := strings.Join(headerValues(ctx, name), ", ")
 		want := expHeaders[name]
 		if got != want {
 			t.Errorf("Response header %q = %q, want %q", name, got, want)
 		}
 	}
+}
+
+func headerValues(ctx *fasthttp.RequestCtx, key string) []string {
+	var results []string
+
+	ctx.Response.Header.VisitAll(func(k []byte, value []byte) {
+		if strings.EqualFold(string(k), key) {
+			results = append(results, string(value))
+		}
+	})
+
+	return results
 }
 
 func assertResponse(t *testing.T, res *httptest.ResponseRecorder, responseCode int) {
@@ -144,8 +158,8 @@ func TestSpec(t *testing.T) {
 		{
 			"AllowedOriginFuncMatch",
 			Options{
-				AllowOriginFunc: func(o string) bool {
-					return regexp.MustCompile("^http://foo").MatchString(o)
+				AllowOriginFunc: func(o []byte) bool {
+					return regexp.MustCompile("^http://foo").Match(o)
 				},
 			},
 			"GET",
@@ -160,8 +174,8 @@ func TestSpec(t *testing.T) {
 		{
 			"AllowOriginRequestFuncMatch",
 			Options{
-				AllowOriginRequestFunc: func(r *http.Request, o string) bool {
-					return regexp.MustCompile("^http://foo").MatchString(o) && r.Header.Get("Authorization") == "secret"
+				AllowOriginRequestFunc: func(ctx *fasthttp.RequestCtx, o []byte) bool {
+					return regexp.MustCompile("^http://foo").Match(o) && string(ctx.Request.Header.Peek("Authorization")) == "secret"
 				},
 			},
 			"GET",
@@ -177,8 +191,8 @@ func TestSpec(t *testing.T) {
 		{
 			"AllowOriginRequestFuncNotMatch",
 			Options{
-				AllowOriginRequestFunc: func(r *http.Request, o string) bool {
-					return regexp.MustCompile("^http://foo").MatchString(o) && r.Header.Get("Authorization") == "secret"
+				AllowOriginRequestFunc: func(ctx *fasthttp.RequestCtx, o []byte) bool {
+					return regexp.MustCompile("^http://foo").Match(o) && string(ctx.Request.Header.Peek("Authorization")) == "secret"
 				},
 			},
 			"GET",
@@ -402,27 +416,34 @@ func TestSpec(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(tc.options)
 
-			req, _ := http.NewRequest(tc.method, "http://example.com/foo", nil)
+			var ctx fasthttp.RequestCtx
+			ctx.Request.Header.SetMethod(tc.method)
+			ctx.Request.SetRequestURI("http://example.com/foo")
+
 			for name, value := range tc.reqHeaders {
-				req.Header.Add(name, value)
+				ctx.Request.Header.Add(name, value)
 			}
 
-			t.Run("Handler", func(t *testing.T) {
-				res := httptest.NewRecorder()
-				s.Handler(testHandler).ServeHTTP(res, req)
-				assertHeaders(t, res.Header(), tc.resHeaders)
-			})
-			t.Run("HandlerFunc", func(t *testing.T) {
-				res := httptest.NewRecorder()
-				s.HandlerFunc(res, req)
-				assertHeaders(t, res.Header(), tc.resHeaders)
-			})
-			t.Run("Negroni", func(t *testing.T) {
-				res := httptest.NewRecorder()
-				s.ServeHTTP(res, req, testHandler)
-				assertHeaders(t, res.Header(), tc.resHeaders)
+			t.Run("fasthttp.RequestHandler", func(t *testing.T) {
+				s.Handler(testHandler)(&ctx)
+				assertHeaders(t, &ctx, tc.resHeaders)
 			})
 
+			// t.Run("Handler", func(t *testing.T) {
+			// 	res := httptest.NewRecorder()
+			// 	s.Handler(testHandler).ServeHTTP(res, req)
+			// 	assertHeaders(t, res.Header(), tc.resHeaders)
+			// })
+			// t.Run("HandlerFunc", func(t *testing.T) {
+			// 	res := httptest.NewRecorder()
+			// 	s.HandlerFunc(res, req)
+			// 	assertHeaders(t, res.Header(), tc.resHeaders)
+			// })
+			// t.Run("Negroni", func(t *testing.T) {
+			// 	res := httptest.NewRecorder()
+			// 	s.ServeHTTP(res, req, testHandler)
+			// 	assertHeaders(t, res.Header(), tc.resHeaders)
+			// })
 		})
 	}
 }
@@ -457,13 +478,15 @@ func TestHandlePreflightInvalidOriginAbortion(t *testing.T) {
 	s := New(Options{
 		AllowedOrigins: []string{"http://foo.com"},
 	})
-	res := httptest.NewRecorder()
-	req, _ := http.NewRequest("OPTIONS", "http://example.com/foo", nil)
-	req.Header.Add("Origin", "http://example.com/")
 
-	s.handlePreflight(res, req)
+	var ctx fasthttp.RequestCtx
+	ctx.Request.Header.SetMethod(http.MethodOptions)
+	ctx.Request.SetRequestURI("http://example.com/foo")
+	ctx.Request.Header.Add("Origin", "http://example.com/")
 
-	assertHeaders(t, res.Header(), map[string]string{
+	s.handlePreflight(&ctx)
+
+	assertHeaders(t, &ctx, map[string]string{
 		"Vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
 	})
 }
@@ -472,25 +495,29 @@ func TestHandlePreflightNoOptionsAbortion(t *testing.T) {
 	s := New(Options{
 		// Intentionally left blank.
 	})
-	res := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "http://example.com/foo", nil)
 
-	s.handlePreflight(res, req)
+	var ctx fasthttp.RequestCtx
+	ctx.Request.Header.SetMethod(http.MethodGet)
+	ctx.Request.SetRequestURI("http://example.com/foo")
 
-	assertHeaders(t, res.Header(), map[string]string{})
+	s.handlePreflight(&ctx)
+
+	assertHeaders(t, &ctx, map[string]string{})
 }
 
 func TestHandleActualRequestInvalidOriginAbortion(t *testing.T) {
 	s := New(Options{
 		AllowedOrigins: []string{"http://foo.com"},
 	})
-	res := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "http://example.com/foo", nil)
-	req.Header.Add("Origin", "http://example.com/")
 
-	s.handleActualRequest(res, req)
+	var ctx fasthttp.RequestCtx
+	ctx.Request.Header.SetMethod(http.MethodGet)
+	ctx.Request.SetRequestURI("http://example.com/foo")
+	ctx.Request.Header.Add("Origin", "http://example.com")
 
-	assertHeaders(t, res.Header(), map[string]string{
+	s.handleActualRequest(&ctx)
+
+	assertHeaders(t, &ctx, map[string]string{
 		"Vary": "Origin",
 	})
 }
@@ -500,13 +527,15 @@ func TestHandleActualRequestInvalidMethodAbortion(t *testing.T) {
 		AllowedMethods:   []string{"POST"},
 		AllowCredentials: true,
 	})
-	res := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "http://example.com/foo", nil)
-	req.Header.Add("Origin", "http://example.com/")
 
-	s.handleActualRequest(res, req)
+	var ctx fasthttp.RequestCtx
+	ctx.Request.Header.SetMethod(http.MethodGet)
+	ctx.Request.SetRequestURI("http://example.com/foo")
+	ctx.Request.Header.Add("Origin", "http://example.com/")
 
-	assertHeaders(t, res.Header(), map[string]string{
+	s.handleActualRequest(&ctx)
+
+	assertHeaders(t, &ctx, map[string]string{
 		"Vary": "Origin",
 	})
 }
@@ -516,7 +545,7 @@ func TestIsMethodAllowedReturnsFalseWithNoMethods(t *testing.T) {
 		// Intentionally left blank.
 	})
 	s.allowedMethods = []string{}
-	if s.isMethodAllowed("") {
+	if s.isMethodAllowed(nil) {
 		t.Error("IsMethodAllowed should return false when c.allowedMethods is nil.")
 	}
 }
@@ -525,7 +554,7 @@ func TestIsMethodAllowedReturnsTrueWithOptions(t *testing.T) {
 	s := New(Options{
 		// Intentionally left blank.
 	})
-	if !s.isMethodAllowed("OPTIONS") {
+	if !s.isMethodAllowed([]byte("OPTIONS")) {
 		t.Error("IsMethodAllowed should return true when c.allowedMethods is nil.")
 	}
 }

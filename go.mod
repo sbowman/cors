@@ -3,5 +3,6 @@ module github.com/rs/cors
 go 1.13
 
 require (
-	github.com/gin-gonic/gin v1.5.0
+	github.com/klauspost/compress v1.10.10 // indirect
+	github.com/valyala/fasthttp v1.14.0
 )
