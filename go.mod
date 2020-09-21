@@ -1,8 +1,9 @@
-module github.com/rs/cors
+module github.com/sbowman/cors
 
 go 1.13
 
 require (
-	github.com/klauspost/compress v1.10.10 // indirect
-	github.com/valyala/fasthttp v1.14.0
+	github.com/fasthttp/router v1.3.2 // indirect
+	github.com/klauspost/compress v1.11.0 // indirect
+	github.com/valyala/fasthttp v1.16.0
 )

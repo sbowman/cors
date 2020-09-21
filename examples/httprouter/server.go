@@ -1,22 +1,22 @@
 package main
 
 import (
-	"net/http"
+	"github.com/fasthttp/router"
+	"github.com/valyala/fasthttp"
 
-	"github.com/julienschmidt/httprouter"
-	"github.com/rs/cors"
+	"github.com/sbowman/cors"
 )
 
-func Hello(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte("{\"hello\": \"world\"}"))
+func Hello(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("application/json")
+	_, _ = ctx.Write([]byte("{\"hello\": \"world\"}"))
 }
 
 func main() {
-	router := httprouter.New()
-	router.GET("/", Hello)
+	r := router.New()
+	r.GET("/", Hello)
 
-	handler := cors.Default().Handler(router)
+	handler := cors.Default().Handler(r.Handler)
 
-	http.ListenAndServe(":8080", handler)
+	fasthttp.ListenAndServe(":8080", handler)
 }
